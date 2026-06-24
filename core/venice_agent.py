@@ -100,6 +100,10 @@ from the screenshot.
   — Save COLLECTED DATA (results, extracted fields) to the run's data file.
     Use whenever you gather a piece of information worth keeping.
 
+{"action": "mark_done", "index": 0}
+  — Mark WORK QUEUE item [N] as completed so it is never processed again.
+    Call this the moment you finish a queue item. (Items tagged (repeat) stay.)
+
 {"action": "done", "result": "Summary of what was accomplished"}
   — Use when the entire task is complete.
 
@@ -332,7 +336,9 @@ def run_agent(
     on_ask_human: Callable[[str], Optional[str]] = None,   # ask via TG, returns reply
     on_remember: Callable[[str], None] = None,             # persist a learned instruction
     learned: str = "",                                     # preloaded learned instructions
-    knowledge: str = "",                                   # operator-curated always-on knowledge
+    knowledge: str = "",                                   # operator notes always-on
+    worklist: str = "",                                    # numbered queue of pending work items
+    on_mark_done: Callable[[int], None] = None,            # mark a work item done
     # Recording
     on_save_data: Callable[[dict], None] = None,           # persist collected data
     record_dir: str = "",                                  # folder to save per-step screenshots
@@ -342,9 +348,16 @@ def run_agent(
     import os as _os
     system = SYSTEM_PROMPT
     if knowledge.strip():
-        system += ("\n\n## KNOWLEDGE BASE (operator-provided, ALWAYS in memory — "
+        system += ("\n\n## KNOWLEDGE BASE (operator notes, ALWAYS in memory — "
                    "use these facts/credentials/rules whenever relevant):\n"
                    + knowledge.strip())
+    if worklist.strip():
+        system += ("\n\n## WORK QUEUE — process these items one by one. Each has an "
+                   "index [N]. When you FINISH an item, call "
+                   '{"action":"mark_done","index":N} so it is never repeated. '
+                   "Items tagged (repeat) must be done every run and stay in the "
+                   "queue. Only these PENDING items remain (done ones are already "
+                   "removed):\n" + worklist.strip())
     if learned.strip():
         system += ("\n\n## LEARNED INSTRUCTIONS (from the operator — these are your "
                    "standing rules, ALWAYS follow them, they override defaults):\n"
@@ -359,6 +372,8 @@ def run_agent(
     on_log(f"Task: {instruction[:120]}...")
     if knowledge.strip():
         on_log(f"📚 Knowledge base loaded ({len(knowledge)} chars).")
+    if worklist.strip():
+        on_log(f"📋 Work queue: {worklist.count(chr(10)) + 1} pending item(s).")
     if learned.strip():
         # Recall remembered instructions out loud at every launch
         on_log(f"🧠 Recalled {learned.count(chr(10)) + 1} saved instruction(s):")
@@ -486,6 +501,18 @@ def run_agent(
                         result = f"Remembered: {note[:80]}"
                     else:
                         result = "Nothing to remember."
+
+                # ── mark_done: mark a work-queue item complete ───
+                elif a == "mark_done":
+                    idx = action.get("index", action.get("item"))
+                    if idx is not None and on_mark_done:
+                        try:
+                            on_mark_done(int(re.search(r'\d+', str(idx)).group()))
+                            result = f"Marked work item {idx} done"
+                        except Exception as e:
+                            result = f"mark_done failed: {e}"
+                    else:
+                        result = "No index for mark_done."
 
                 # ── save_data: persist collected data to file ────
                 elif a == "save_data":

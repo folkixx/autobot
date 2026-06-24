@@ -20,8 +20,8 @@ from config import VENICE_API_KEY, VENICE_BASE_URL, VENICE_MODEL
 _PROJECT_DIR = os.path.dirname(os.path.dirname(__file__))
 # Learned instructions the AI accumulates from operator replies (manual control)
 LEARNED_PATH = os.path.join(_PROJECT_DIR, "learned_instructions.txt")
-# Operator-curated knowledge that is ALWAYS in the bot's memory
-KNOWLEDGE_PATH = os.path.join(_PROJECT_DIR, "knowledge.txt")
+# Work data the bot processes: items it marks done so it never repeats them
+WORKLIST_PATH = os.path.join(_PROJECT_DIR, "worklist.txt")
 # Per-run recordings (screenshots, log, collected data)
 RUNS_DIR = os.path.join(_PROJECT_DIR, "runs")
 
@@ -263,65 +263,130 @@ class AIBotApp(tk.Tk):
         self._nb.add(task_tab, text="  ⚡ Task  ")
         self._build_task_tab(task_tab)
 
-        know_tab = tk.Frame(self._nb, bg=BG)
-        self._nb.add(know_tab, text="  🧠 Knowledge  ")
-        self._build_knowledge_tab(know_tab)
+        data_tab = tk.Frame(self._nb, bg=BG)
+        self._nb.add(data_tab, text="  📋 Work Data  ")
+        self._build_data_tab(data_tab)
 
         chat_tab = tk.Frame(self._nb, bg=BG)
         self._nb.add(chat_tab, text="  💬 Chat with AI  ")
         self._build_chat_tab(chat_tab)
 
-    # ── Knowledge tab (always-in-memory operator knowledge) ────
+    # ── Work Data tab (worklist the bot processes & marks done) ─
 
-    def _build_knowledge_tab(self, parent):
+    def _build_data_tab(self, parent):
         hdr = tk.Frame(parent, bg=BG2)
         hdr.pack(fill='x')
-        tk.Label(hdr, text="ALWAYS-IN-MEMORY KNOWLEDGE", font=('Segoe UI', 8, 'bold'),
+        tk.Label(hdr, text="WORK DATA", font=('Segoe UI', 8, 'bold'),
                  bg=BG2, fg=MAUVE).pack(side='left', padx=10, pady=6)
-        tk.Label(hdr, text="Facts/rules the bot keeps in memory on every run",
+        tk.Label(hdr, text="one item per line — bot marks [x] done & won't repeat it",
                  font=FONT_SM, bg=BG2, fg=GRAY).pack(side='left', pady=6)
-        self._know_status = tk.Label(hdr, text="", font=FONT_SM, bg=BG2, fg=GREEN)
-        self._know_status.pack(side='right', padx=10)
+        self._data_status = tk.Label(hdr, text="", font=FONT_SM, bg=BG2, fg=GREEN)
+        self._data_status.pack(side='right', padx=10)
+        ttk.Button(hdr, text="🔄 Reload", style='Sm.TButton',
+                   command=self._reload_worklist).pack(side='right', padx=4, pady=4)
         ttk.Button(hdr, text="💾 Save", style='Run.TButton',
-                   command=self._save_knowledge).pack(side='right', padx=6, pady=4)
+                   command=self._save_worklist).pack(side='right', padx=4, pady=4)
 
-        self._knowledge = tk.Text(
+        self._worklist = tk.Text(
             parent, bg='#11111b', fg=FG, font=FONT_MONO,
             borderwidth=0, highlightthickness=1,
             highlightcolor=MAUVE, highlightbackground=BG3,
             insertbackground=FG, wrap='word', undo=True,
         )
-        self._knowledge.pack(fill='both', expand=True, pady=(0, 4))
-        self._bind_clipboard(self._knowledge)
-        self._build_context_menu(self._knowledge)
-        # Save on Ctrl+S too
-        self._knowledge.bind('<Control-KeyPress>',
-                             lambda e: (self._save_knowledge() or 'break') if e.keycode == 83 else None,
-                             add='+')
+        self._worklist.pack(fill='both', expand=True, pady=(0, 4))
+        # Colour-code statuses
+        self._worklist.tag_config('done', foreground=GRAY, overstrike=True)
+        self._worklist.tag_config('repeat', foreground=TEAL)
+        self._worklist.tag_config('note', foreground=GRAY)
+        self._bind_clipboard(self._worklist)
+        self._build_context_menu(self._worklist)
+        self._worklist.bind('<Control-KeyPress>',
+                            lambda e: (self._save_worklist() or 'break') if e.keycode == 83 else None,
+                            add='+')
+        self._worklist.bind('<KeyRelease>', lambda e: self._recolor_worklist())
 
-        # Load existing knowledge
+        self._reload_worklist()
+
+    def _reload_worklist(self):
+        self._worklist.delete('1.0', 'end')
         try:
-            if os.path.exists(KNOWLEDGE_PATH):
-                with open(KNOWLEDGE_PATH, encoding='utf-8') as f:
-                    self._knowledge.insert('1.0', f.read())
+            if os.path.exists(WORKLIST_PATH):
+                with open(WORKLIST_PATH, encoding='utf-8') as f:
+                    self._worklist.insert('1.0', f.read())
             else:
-                self._knowledge.insert('1.0',
-                    "# Сюда впиши всё, что бот должен ВСЕГДА помнить.\n"
-                    "# Например — данные для входа, правила, особенности сайтов:\n"
-                    "#   sabotage.ink: логин folki, пароль zxcASD\n"
-                    "#   На форме логина сначала кликни поле, потом вводи\n")
+                self._worklist.insert('1.0',
+                    "# Рабочие данные. Одна строка = один элемент.\n"
+                    "# Бот идёт по списку, делает каждый PENDING и помечает [x] — больше не повторит.\n"
+                    "#   [x] перед строкой = выполнено (пропустит)\n"
+                    "#   [*] перед строкой = делать ВСЕГДА (повторяемое)\n"
+                    "#   # = заметка/контекст (всегда в памяти)\n"
+                    "# Пример:\n"
+                    "John Doe, 123 Main St, NY 10001\n"
+                    "Jane Smith, 5 Oak Ave, TX 75001\n"
+                    "[*] проверять баланс каждый запуск\n")
         except Exception:
             pass
+        self._recolor_worklist()
 
-    def _save_knowledge(self):
+    def _recolor_worklist(self):
+        for tag in ('done', 'repeat', 'note'):
+            self._worklist.tag_remove(tag, '1.0', 'end')
+        n = int(self._worklist.index('end-1c').split('.')[0])
+        for i in range(1, n + 1):
+            line = self._worklist.get(f'{i}.0', f'{i}.end').strip().lower()
+            if line.startswith('#'):
+                self._worklist.tag_add('note', f'{i}.0', f'{i}.end')
+            elif line.startswith('[x]'):
+                self._worklist.tag_add('done', f'{i}.0', f'{i}.end')
+            elif line.startswith('[*]'):
+                self._worklist.tag_add('repeat', f'{i}.0', f'{i}.end')
+
+    def _save_worklist(self):
         try:
-            txt = self._knowledge.get('1.0', 'end').strip()
-            with open(KNOWLEDGE_PATH, 'w', encoding='utf-8') as f:
+            txt = self._worklist.get('1.0', 'end').rstrip() + "\n"
+            with open(WORKLIST_PATH, 'w', encoding='utf-8') as f:
                 f.write(txt)
             import datetime as _dt
-            self._know_status.config(text=f"✓ saved {_dt.datetime.now():%H:%M:%S}")
+            self._data_status.config(text=f"✓ saved {_dt.datetime.now():%H:%M:%S}", fg=GREEN)
+            self._recolor_worklist()
         except Exception as e:
-            self._know_status.config(text=f"save failed: {e}", fg=RED)
+            self._data_status.config(text=f"save failed: {e}", fg=RED)
+
+    def _build_worklist_context(self):
+        """Parse worklist.txt (thread-safe, reads the file) into:
+          notes      — '#' lines kept always in memory
+          queue_text — numbered PENDING + repeatable items for the agent
+          line_map   — {queue_index: {line, text, repeat}} for mark_done
+        Done items ([x]) are excluded so the bot never repeats them."""
+        notes, queue, line_map = [], [], {}
+        try:
+            with open(WORKLIST_PATH, encoding="utf-8") as f:
+                lines = f.read().split("\n")
+        except Exception:
+            lines = []
+        qi = 0
+        for li, raw in enumerate(lines):
+            s = raw.strip()
+            if not s:
+                continue
+            low = s.lower()
+            if s.startswith("#"):
+                notes.append(s.lstrip("# ").rstrip())
+            elif low.startswith("[x]"):
+                continue  # done — skip
+            elif low.startswith("[*]"):
+                text = s[3:].strip()
+                queue.append(f"[{qi}] (repeat) {text}")
+                line_map[qi] = {"line": li, "text": text, "repeat": True}
+                qi += 1
+            else:
+                text = s[3:].strip() if low.startswith("[ ]") else s
+                queue.append(f"[{qi}] {text}")
+                line_map[qi] = {"line": li, "text": text, "repeat": False}
+                qi += 1
+        knowledge = "\n".join(f"- {n}" for n in notes)
+        queue_text = "\n".join(queue)
+        return knowledge, queue_text, line_map
 
     # ── Left panels ───────────────────────────────────────────
 
@@ -715,9 +780,9 @@ class AIBotApp(tk.Tk):
         if not instruction or instruction.startswith('Введи инструкцию'):
             messagebox.showinfo("Пусто", "Напиши инструкцию для задачи.", parent=self)
             return
-        # Persist knowledge edits now (main thread — Tk widget access)
+        # Persist work-data edits now (main thread — Tk widget access)
         try:
-            self._save_knowledge()
+            self._save_worklist()
         except Exception:
             pass
         self._nb.select(0)  # switch to Task tab
@@ -928,14 +993,29 @@ class AIBotApp(tk.Tk):
         except Exception:
             pass
 
-        # Always-in-memory knowledge (saved on the main thread at _start)
-        knowledge = ""
-        try:
-            if os.path.exists(KNOWLEDGE_PATH):
-                with open(KNOWLEDGE_PATH, encoding="utf-8") as f:
-                    knowledge = f.read()
-        except Exception:
-            pass
+        # Work data: notes (always in memory) + a numbered queue of PENDING
+        # (and repeatable) items. Done items are excluded so they aren't redone.
+        knowledge, queue_text, line_map = self._build_worklist_context()
+
+        def do_mark_done(index):
+            """Mark queue item #index as done in worklist.txt (skip if repeat)."""
+            info = line_map.get(int(index))
+            if not info:
+                return
+            if info.get("repeat"):
+                log(f"✓ item [{index}] is repeatable — kept for next run")
+                return
+            try:
+                with open(WORKLIST_PATH, encoding="utf-8") as f:
+                    lines = f.read().split("\n")
+                li = info["line"]
+                if 0 <= li < len(lines) and not lines[li].lstrip().lower().startswith("[x]"):
+                    lines[li] = "[x] " + lines[li].lstrip()
+                    with open(WORKLIST_PATH, "w", encoding="utf-8") as f:
+                        f.write("\n".join(lines))
+                    log(f"✓ marked done [{index}]: {info['text'][:70]}")
+            except Exception as e:
+                log(f"mark_done failed: {e}")
 
         # ── Run agent ─────────────────────────────────────────
         try:
@@ -953,6 +1033,8 @@ class AIBotApp(tk.Tk):
                 on_remember=do_remember,
                 learned=learned,
                 knowledge=knowledge,
+                worklist=queue_text,
+                on_mark_done=do_mark_done,
                 on_save_data=do_save_data,
                 record_dir=run_dir,
                 on_operator_msgs=get_operator_msgs,

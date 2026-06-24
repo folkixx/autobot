@@ -8,6 +8,7 @@ flows/
 chat_log.txt
 learned_instructions.txt
 knowledge.txt
+worklist.txt
 *.log
 
 # Python
