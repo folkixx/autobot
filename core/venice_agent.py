@@ -335,12 +335,15 @@ def run_agent(
     # Recording
     on_save_data: Callable[[dict], None] = None,           # persist collected data
     record_dir: str = "",                                  # folder to save per-step screenshots
+    # Live operator interrupts: returns a list of unsolicited Telegram messages
+    on_operator_msgs: Callable[[], list] = None,
 ) -> str:
     import os as _os
     system = SYSTEM_PROMPT
     if learned.strip():
-        system += ("\n\n## LEARNED INSTRUCTIONS (from the operator via Telegram — "
-                   "follow these, they override defaults):\n" + learned.strip())
+        system += ("\n\n## LEARNED INSTRUCTIONS (from the operator — these are your "
+                   "standing rules, ALWAYS follow them, they override defaults):\n"
+                   + learned.strip())
 
     messages = [
         {"role": "system", "content": system},
@@ -350,7 +353,10 @@ def run_agent(
     on_log("Venice agent started.")
     on_log(f"Task: {instruction[:120]}...")
     if learned.strip():
-        on_log(f"Loaded {learned.count(chr(10)) + 1} learned instruction line(s).")
+        # Recall remembered instructions out loud at every launch
+        on_log(f"🧠 Recalled {learned.count(chr(10)) + 1} saved instruction(s):")
+        for ln in [l for l in learned.splitlines() if l.strip()][:20]:
+            on_log(f"     • {ln.strip()[:120]}")
 
     for step in range(1, MAX_STEPS + 1):
         if stop_flag():
@@ -358,6 +364,20 @@ def run_agent(
             return "Stopped"
 
         on_log(f"── Step {step}/{MAX_STEPS} ──")
+
+        # Live operator interrupts — anything the operator typed in Telegram
+        # since the last step becomes a high-priority instruction right now.
+        if on_operator_msgs:
+            try:
+                for msg in (on_operator_msgs() or []):
+                    on_log(f"📩 Operator interrupt: {msg[:120]}")
+                    messages.append({
+                        "role": "user",
+                        "content": (f"OPERATOR INTERRUPT (follow this immediately, "
+                                    f"it overrides your current plan): {msg}")
+                    })
+            except Exception:
+                pass
 
         browser = get_browser()
 

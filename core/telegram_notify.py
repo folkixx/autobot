@@ -105,50 +105,91 @@ def _get_updates(offset: int, timeout: int = 25) -> list:
         return []
 
 
-def drain_pending() -> None:
-    """Advance the offset past any OLD messages so a subsequent wait only sees
-    replies sent AFTER the question. Call right before asking the human."""
+# ── Background listener (single poller feeds one inbox) ───────────────────────
+# One thread polls getUpdates and pushes every admin message into _inbox.
+# Both ask_human (blocking wait) and proactive interrupts (non-blocking drain)
+# consume from this single inbox, so they never steal each other's updates.
+import queue as _queue
+_inbox: "_queue.Queue[str]" = _queue.Queue()
+_poller_thread = None
+_poller_stop = False
+
+
+def _poll_loop(stop_flag):
     global _last_update_id
-    updates = _get_updates(0, timeout=0)
-    if updates:
+    # Skip messages that arrived before we started listening
+    pre = _get_updates(0, timeout=0)
+    if pre:
         with _offset_lock:
-            _last_update_id = max(u["update_id"] for u in updates)
+            _last_update_id = max(u["update_id"] for u in pre)
+    while not _poller_stop and not (stop_flag and stop_flag()):
+        with _offset_lock:
+            offset = _last_update_id + 1
+        for u in _get_updates(offset, timeout=20):
+            with _offset_lock:
+                _last_update_id = max(_last_update_id, u["update_id"])
+            m = u.get("message") or u.get("edited_message") or {}
+            chat_id = str(m.get("chat", {}).get("id", ""))
+            text = (m.get("text") or "").strip()
+            if text and (not TELEGRAM_CHAT_ID or chat_id == str(TELEGRAM_CHAT_ID)):
+                _inbox.put(text)
+
+
+def start_listener(stop_flag=None) -> None:
+    """Start the background Telegram poller (idempotent)."""
+    global _poller_thread, _poller_stop
+    if _poller_thread and _poller_thread.is_alive():
+        return
+    _poller_stop = False
+    _poller_thread = threading.Thread(target=_poll_loop, args=(stop_flag,), daemon=True)
+    _poller_thread.start()
+
+
+def stop_listener() -> None:
+    global _poller_stop
+    _poller_stop = True
+
+
+def clear_inbox() -> None:
+    """Drop any queued messages (call before asking, for a clean answer)."""
+    try:
+        while True:
+            _inbox.get_nowait()
+    except _queue.Empty:
+        pass
+
+
+def next_message() -> str | None:
+    """Non-blocking: return the next pending admin message, or None."""
+    try:
+        return _inbox.get_nowait()
+    except _queue.Empty:
+        return None
 
 
 def wait_for_reply(stop_flag=None, timeout: float = 1800.0) -> str | None:
-    """Block until the admin sends a text message in their chat, then return it.
-    Returns None on timeout or if stopped. `stop_flag` is a callable -> bool."""
-    global _last_update_id
+    """Block until the admin sends a message (via the background poller)."""
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if stop_flag and stop_flag():
             return None
-        with _offset_lock:
-            offset = _last_update_id + 1
-        updates = _get_updates(offset, timeout=20)
-        for u in updates:
-            with _offset_lock:
-                _last_update_id = max(_last_update_id, u["update_id"])
-            msg = u.get("message") or u.get("edited_message") or {}
-            chat_id = str(msg.get("chat", {}).get("id", ""))
-            text = msg.get("text", "")
-            # Only accept replies from the configured admin chat
-            if text and (not TELEGRAM_CHAT_ID or chat_id == str(TELEGRAM_CHAT_ID)):
-                return text.strip()
+        try:
+            return _inbox.get(timeout=1.0)
+        except _queue.Empty:
+            continue
     return None
 
 
 def ask(question: str, screenshot: bytes | None = None,
         stop_flag=None, timeout: float = 1800.0, on_log=None) -> str | None:
-    """Send a question to the admin and BLOCK until they reply. Returns the
-    reply text, or None on timeout/stop. Used for manual-control mode."""
+    """Send a question to the admin and BLOCK until they reply."""
     import html
-    drain_pending()
+    start_listener(stop_flag)      # ensure the poller is running
+    clear_inbox()                  # only accept a reply sent AFTER the question
     safe_q = html.escape(question)
     sent = send_message(
         f"🤖 <b>AutoBot спрашивает:</b>\n\n{safe_q}\n\n<i>Ответь сообщением.</i>")
     if not sent:
-        # Retry as plain text — HTML parse errors or bad chat_id show here
         sent = send_message(f"AutoBot спрашивает: {question}", parse_mode="")
     if on_log:
         on_log(f"   TG question sent: {sent} (chat_id={TELEGRAM_CHAT_ID})")

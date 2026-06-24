@@ -823,6 +823,21 @@ class AIBotApp(tk.Tk):
             except Exception as e:
                 log(f"remember failed: {e}")
 
+        # Live operator interrupts: start the Telegram listener and drain any
+        # messages the operator typed proactively (auto-remember + apply).
+        telegram_notify.start_listener(stop_flag=lambda: self._stop_flag)
+
+        def get_operator_msgs():
+            out = []
+            while True:
+                m = telegram_notify.next_message()
+                if not m:
+                    break
+                self._log_q.put(('log', f"💬 You (live): {m}", 'notify'))
+                do_remember(f"Operator standing instruction: {m}")
+                out.append(m)
+            return out
+
         learned = ""
         try:
             if os.path.exists(LEARNED_PATH):
@@ -848,6 +863,7 @@ class AIBotApp(tk.Tk):
                 learned=learned,
                 on_save_data=do_save_data,
                 record_dir=run_dir,
+                on_operator_msgs=get_operator_msgs,
             )
             if run_dir:
                 log(f"📁 Run saved to: {run_dir}")
