@@ -437,6 +437,165 @@ class CDPBrowser:
             return False
         return self.fill_at(coords["x"], coords["y"], text)
 
+    # ── Index-based actions (coordinate-independent, reliable) ─────
+
+    def _locate_index(self, index: int, action: str) -> dict | None:
+        """Re-scan the page live (same order as scan_elements), find the Nth
+        visible interactive element, scroll it into view, and perform `action`
+        ('focus' or 'click') ON IT VIA JS — independent of click coordinates.
+        Returns {x,y,tag} (post-scroll viewport coords for a humanized mouse
+        move) or None if not found."""
+        do_click = "el.click();" if action == "click" else ""
+        do_focus = "try { el.focus(); } catch(e) {}" if action == "focus" else ""
+        js = f"""
+        (function() {{
+          var sel = {json.dumps(self._INTERACTIVE_SEL)};
+          var want = {int(index)}, n = 0, res = null;
+          function scan(doc, ox, oy) {{
+            var nodes;
+            try {{ nodes = doc.querySelectorAll(sel); }} catch(e) {{ return; }}
+            for (var i = 0; i < nodes.length && res === null; i++) {{
+              var el = nodes[i], r = el.getBoundingClientRect();
+              if (r.width < 2 || r.height < 2) continue;
+              var st = (el.ownerDocument.defaultView || window).getComputedStyle(el);
+              if (st.display === 'none' || st.visibility === 'hidden') continue;
+              if (n === want) {{
+                el.scrollIntoView({{block: 'center', inline: 'center'}});
+                {do_focus}
+                {do_click}
+                var rr = el.getBoundingClientRect();
+                res = {{x: ox + rr.left + rr.width/2, y: oy + rr.top + rr.height/2,
+                        tag: el.tagName.toLowerCase()}};
+                return;
+              }}
+              n++;
+            }}
+            var fr = doc.querySelectorAll('iframe,frame');
+            for (var j = 0; j < fr.length && res === null; j++) {{
+              try {{
+                var fd = fr[j].contentDocument; if (!fd) continue;
+                var b = fr[j].getBoundingClientRect();
+                scan(fd, ox + b.left, oy + b.top);
+              }} catch(e) {{}}
+            }}
+          }}
+          scan(document, 0, 0);
+          return res;
+        }})()
+        """
+        return self._call("Runtime.evaluate", {"expression": js}).get("result", {}).get("value")
+
+    def _set_value_index(self, index: int, text: str) -> bool:
+        """Fallback: set the Nth element's value directly + fire input/change
+        events so frameworks (React/Vue) register it. Used if typing didn't
+        land in the field."""
+        js = f"""
+        (function() {{
+          var sel = {json.dumps(self._INTERACTIVE_SEL)};
+          var want = {int(index)}, n = 0, done = false;
+          var val = {json.dumps(text)};
+          function scan(doc) {{
+            var nodes; try {{ nodes = doc.querySelectorAll(sel); }} catch(e) {{ return; }}
+            for (var i = 0; i < nodes.length && !done; i++) {{
+              var el = nodes[i], r = el.getBoundingClientRect();
+              if (r.width < 2 || r.height < 2) continue;
+              var st = (el.ownerDocument.defaultView || window).getComputedStyle(el);
+              if (st.display === 'none' || st.visibility === 'hidden') continue;
+              if (n === want) {{
+                var proto = el.tagName === 'TEXTAREA'
+                  ? window.HTMLTextAreaElement.prototype
+                  : window.HTMLInputElement.prototype;
+                var setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+                setter.call(el, val);
+                el.dispatchEvent(new Event('input', {{bubbles: true}}));
+                el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                done = true; return;
+              }}
+              n++;
+            }}
+            var fr = doc.querySelectorAll('iframe,frame');
+            for (var j = 0; j < fr.length && !done; j++) {{
+              try {{ if (fr[j].contentDocument) scan(fr[j].contentDocument); }} catch(e) {{}}
+            }}
+          }}
+          scan(document);
+          return done;
+        }})()
+        """
+        return bool(self._call("Runtime.evaluate", {"expression": js}).get("result", {}).get("value"))
+
+    def _value_index(self, index: int) -> str:
+        """Read the Nth element's current value (to verify a fill worked)."""
+        js = f"""
+        (function() {{
+          var sel = {json.dumps(self._INTERACTIVE_SEL)};
+          var want = {int(index)}, n = 0, v = null;
+          function scan(doc) {{
+            var nodes; try {{ nodes = doc.querySelectorAll(sel); }} catch(e) {{ return; }}
+            for (var i = 0; i < nodes.length && v === null; i++) {{
+              var el = nodes[i], r = el.getBoundingClientRect();
+              if (r.width < 2 || r.height < 2) continue;
+              var st = (el.ownerDocument.defaultView || window).getComputedStyle(el);
+              if (st.display === 'none' || st.visibility === 'hidden') continue;
+              if (n === want) {{ v = el.value || ''; return; }}
+              n++;
+            }}
+            var fr = doc.querySelectorAll('iframe,frame');
+            for (var j = 0; j < fr.length && v === null; j++) {{
+              try {{ if (fr[j].contentDocument) scan(fr[j].contentDocument); }} catch(e) {{}}
+            }}
+          }}
+          scan(document);
+          return v;
+        }})()
+        """
+        return self._call("Runtime.evaluate", {"expression": js}).get("result", {}).get("value") or ""
+
+    def click_index(self, index: int) -> bool:
+        """Click the Nth interactive element reliably (JS click by index) with
+        a humanized mouse move to its position for realism."""
+        info = self._locate_index(index, "click")
+        if not info:
+            return False
+        # Visual/anti-fraud mouse movement to the element (JS already clicked)
+        try:
+            self._move_only(info["x"], info["y"])
+        except Exception:
+            pass
+        return True
+
+    def fill_index(self, index: int, text: str) -> bool:
+        """Fill the Nth interactive element reliably: focus by index (JS),
+        humanized mouse move, type via insertText, then verify and fall back to
+        a direct value-set if the field is still empty."""
+        info = self._locate_index(index, "focus")
+        if not info:
+            return False
+        try:
+            self._move_only(info["x"], info["y"])
+        except Exception:
+            pass
+        # Clear any existing value
+        self._call("Input.dispatchKeyEvent", {"type": "keyDown", "key": "a", "modifiers": 8})
+        self._call("Input.dispatchKeyEvent", {"type": "keyUp", "key": "a", "modifiers": 8})
+        self.press_key("Backspace")
+        time.sleep(0.03)
+        self.type_text(text)
+        # Verify it landed; if not, force it via JS + events
+        if self._value_index(index).strip() != text.strip():
+            self._set_value_index(index, text)
+        return True
+
+    def _move_only(self, x: float, y: float):
+        """Humanized mouse move WITHOUT a click (won't blur a focused field)."""
+        sx, sy = getattr(self, "_last_xy", None) or (
+            random.uniform(100, 900), random.uniform(100, 600))
+        for px, py in mouse_path(sx, sy, x, y)[:-1]:
+            self.mouse_move(px, py)
+            time.sleep(random.uniform(0.001, 0.003))
+        self.mouse_move(x, y)
+        self._last_xy = (x, y)
+
     # ── Scroll ────────────────────────────────────────────────
 
     def scroll_to(self, x: int = 0, y: int = 0):

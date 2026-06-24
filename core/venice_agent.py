@@ -506,10 +506,9 @@ def run_agent(
     return "Max steps reached"
 
 
-def _resolve_coords(browser, action: dict):
-    """Resolve the element the model referenced to (x, y) pixel coords using
-    the snapshot's stored coordinate map. Accepts index / element / selector
-    keys in any form ('[2]', '2', 2, "[data-ai='2']"). Returns (x,y) or None."""
+def _resolve_index(action: dict):
+    """Extract the element index the model referenced, in any form
+    (index / element / selector / target; '[2]', '2', 2, "[data-ai='2']")."""
     raw = action.get("index")
     if raw is None:
         raw = (action.get("element") or action.get("selector")
@@ -517,11 +516,7 @@ def _resolve_coords(browser, action: dict):
     if raw is None:
         return None
     m = re.search(r'\d+', str(raw))
-    if not m:
-        return None
-    idx = int(m.group())
-    coord_map = getattr(browser, "_ai_elements", {}) or {}
-    return coord_map.get(idx)
+    return int(m.group()) if m else None
 
 
 def _norm_text(action: dict) -> str:
@@ -540,12 +535,12 @@ def _execute_browser_action(browser, action: dict, on_notify) -> str:
         return f"Navigated to {action['url']}"
 
     elif a == "click":
-        coords = _resolve_coords(browser, action)
-        if not coords:
-            return f"Element index not found in current element list: {action}"
-        browser.click(coords[0], coords[1])
+        idx = _resolve_index(action)
+        if idx is None:
+            return f"No element index in action: {action}"
+        ok = browser.click_index(idx)
         time.sleep(random.uniform(0.1, 0.3))
-        return f"Clicked element @ {coords}"
+        return f"Clicked element [{idx}]" if ok else f"Element [{idx}] not found"
 
     elif a == "click_coords":
         browser.click(action["x"], action["y"])
@@ -553,11 +548,11 @@ def _execute_browser_action(browser, action: dict, on_notify) -> str:
         return f"Clicked ({action['x']}, {action['y']})"
 
     elif a == "fill":
-        coords = _resolve_coords(browser, action)
-        if not coords:
-            return f"Element index not found in current element list: {action}"
-        browser.fill_at(coords[0], coords[1], _norm_text(action))
-        return f"Filled element @ {coords}"
+        idx = _resolve_index(action)
+        if idx is None:
+            return f"No element index in action: {action}"
+        ok = browser.fill_index(idx, _norm_text(action))
+        return f"Filled element [{idx}]" if ok else f"Element [{idx}] not found"
 
     elif a == "press":
         browser.press_key(action["key"])
