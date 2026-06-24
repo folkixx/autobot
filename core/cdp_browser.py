@@ -267,12 +267,20 @@ class CDPBrowser:
               var st = win.getComputedStyle(el);
               if (st.display === 'none' || st.visibility === 'hidden') continue;
               var tag = el.tagName.toLowerCase();
+              var opts = '';
+              if (tag === 'select' && el.options) {
+                var arr = [];
+                for (var k = 0; k < Math.min(el.options.length, 40); k++)
+                  arr.push((el.options[k].text || '').trim());
+                opts = arr.filter(Boolean).join(' | ');
+              }
               out.push({
                 tag: tag,
                 type: el.getAttribute('type') || '',
                 label: (el.getAttribute('placeholder') || el.getAttribute('name') ||
                         (el.textContent||'').trim() || el.getAttribute('aria-label') || '').slice(0,50),
                 value: (el.value || '').slice(0, 30),
+                options: opts,
                 x: Math.round(offX + r.left + r.width/2),
                 y: Math.round(offY + r.top + r.height/2)
               });
@@ -667,6 +675,64 @@ class CDPBrowser:
         if self._value_index(index).strip() != str(text).strip():
             self._set_value_index(index, text)
         return True
+
+    def select_option(self, index: int, value: str) -> bool:
+        """Pick an option in the Nth element when it's a native <select>.
+        Matches an <option> by visible text or value (case-insensitive,
+        contains), sets it and fires change/input so the page reacts. Moves the
+        visible cursor to it first. Returns True if an option matched."""
+        info = self._locate_index(index, "scroll")
+        if info:
+            try:
+                self._move_only(info["x"], info["y"])
+            except Exception:
+                pass
+        js = f"""
+        (function() {{
+          var sel = {json.dumps(self._INTERACTIVE_SEL)};
+          var want = {int(index)}, target = {json.dumps(value)}.toLowerCase().trim();
+          var n = 0, done = false;
+          function scan(doc) {{
+            var nodes; try {{ nodes = doc.querySelectorAll(sel); }} catch(e) {{ return; }}
+            for (var i = 0; i < nodes.length && !done; i++) {{
+              var el = nodes[i], r = el.getBoundingClientRect();
+              if (r.width < 2 || r.height < 2) continue;
+              var st = (el.ownerDocument.defaultView||window).getComputedStyle(el);
+              if (st.display==='none'||st.visibility==='hidden') continue;
+              if (n === want) {{
+                if (el.tagName === 'SELECT') {{
+                  var opts = el.options, hit = -1;
+                  for (var k=0;k<opts.length;k++) {{
+                    var t=(opts[k].text||'').toLowerCase().trim();
+                    var v=(opts[k].value||'').toLowerCase().trim();
+                    if (t===target||v===target) {{ hit=k; break; }}
+                  }}
+                  if (hit<0) for (var k=0;k<opts.length;k++) {{
+                    var t=(opts[k].text||'').toLowerCase();
+                    if (t.indexOf(target)>=0) {{ hit=k; break; }}
+                  }}
+                  if (hit>=0) {{
+                    el.selectedIndex=hit; el.focus();
+                    el.dispatchEvent(new Event('input',{{bubbles:true}}));
+                    el.dispatchEvent(new Event('change',{{bubbles:true}}));
+                    done=true;
+                  }}
+                }}
+                return;
+              }}
+              n++;
+            }}
+            var fr=doc.querySelectorAll('iframe,frame');
+            for (var j=0;j<fr.length&&!done;j++) {{
+              try {{ if (fr[j].contentDocument) scan(fr[j].contentDocument); }} catch(e) {{}}
+            }}
+          }}
+          scan(document);
+          return done;
+        }})()
+        """
+        return bool(self._call("Runtime.evaluate", {"expression": js, "returnByValue": True})
+                    .get("result", {}).get("value"))
 
     # ── Scroll ────────────────────────────────────────────────
 

@@ -41,6 +41,10 @@ Return ONLY a single JSON action — no markdown, no explanation.
 {"action": "navigate", "url": "https://..."}
 {"action": "click", "index": 3}
 {"action": "fill", "index": 1, "text": "value"}
+{"action": "select_option", "index": 5, "value": "Limited Liability Company"}
+  — For DROPDOWNS (<select>). The element list shows a select's choices after
+    "options:". Pick one by its visible text. Do NOT click a <select> and hope
+    options appear — they won't be in the element list; use select_option.
 {"action": "click_coords", "x": 100, "y": 200}
 {"action": "press", "key": "Enter"}
 {"action": "scroll", "y": 500}
@@ -276,6 +280,8 @@ def _format_elements(items: list) -> str:
             desc += f' "{it["label"]}"'
         if it.get("value"):
             desc += f' value="{it["value"]}"'
+        if it.get("options"):
+            desc += f' options: {it["options"]}'
         desc += f" @ ({it['x']},{it['y']})"
         lines.append(desc)
     return "\n".join(lines)
@@ -657,7 +663,8 @@ def run_agent(
 
                 # ── Browser actions ─────────────────────────────
                 elif a in ("navigate", "click", "click_coords", "fill",
-                           "press", "scroll", "wait", "screenshot"):
+                           "select_option", "select", "press", "scroll",
+                           "wait", "screenshot"):
                     if browser is None:
                         result = "No browser open. Use open_browser first."
                     else:
@@ -748,6 +755,15 @@ def _execute_browser_action(browser, action: dict, on_notify) -> str:
         ok = browser.fill_index(idx, _norm_text(action))
         time.sleep(random.uniform(0.3, 0.8))
         return f"Filled element [{idx}]" if ok else f"Element [{idx}] not found"
+
+    elif a in ("select_option", "select"):
+        idx = _resolve_index(action)
+        val = _norm_text(action) or action.get("option", "")
+        if idx is None:
+            return f"No element index in action: {action}"
+        ok = browser.select_option(idx, val)
+        time.sleep(random.uniform(0.2, 0.5))
+        return f"Selected '{val}' in [{idx}]" if ok else f"Option '{val}' not found in [{idx}]"
 
     elif a == "press":
         browser.press_key(action["key"])
