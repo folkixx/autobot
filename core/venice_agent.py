@@ -110,6 +110,12 @@ from the screenshot.
 {"action": "error", "message": "Why the task cannot be completed"}
   — Use when the task is impossible to complete.
 
+## Tabs
+If a click opens a NEW TAB, the system automatically switches you to it — the
+next element list and screenshot are from the new tab. So after a click that you
+expect opens a new page, just look at the refreshed elements and continue; do
+NOT assume you are stuck on the old page.
+
 ## Manual-control behaviour
 When the task is vague or you are not confident about the next step, prefer
 ask_human over guessing. After the operator answers, do what they say AND, if
@@ -276,6 +282,12 @@ def _format_elements(items: list) -> str:
 
 
 def _build_page_state(browser, use_screenshot: bool, on_log=None, save_png: str = "") -> dict:
+    # If a click opened a new tab, follow it (CDP otherwise stays on the old tab)
+    try:
+        if browser.ensure_active_tab() and on_log:
+            on_log("   ↪ switched to new tab")
+    except Exception:
+        pass
     # Make sure the visible bot-cursor is present (re-injects after navigation)
     try:
         browser.install_cursor()

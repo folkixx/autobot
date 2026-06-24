@@ -47,17 +47,59 @@ class CDPBrowser:
         page = next((t for t in targets if t.get("type") == "page"), None)
         if not page:
             raise RuntimeError("No page target found in CDP")
+        # Remember all current page tabs so later we can detect NEW ones.
+        self._seen_targets = {t.get("id") for t in targets if t.get("type") == "page"}
+        self._attach_ws(page)
+
+    def _attach_ws(self, page: dict):
+        """(Re)connect the WebSocket to a given page target."""
+        try:
+            if self._ws:
+                self._ws.close()
+        except Exception:
+            pass
         self._target_id = page.get("id")
-        ws_url = page["webSocketDebuggerUrl"]
         # Chromium 111+ rejects CDP WebSocket connections whose Origin header
         # is not in the (empty-by-default) allowlist — that's the 403 Forbidden.
         # The check is SKIPPED entirely when no Origin header is present, so we
         # suppress it. websocket-client otherwise auto-adds Origin from the host.
         self._ws = websocket.create_connection(
-            ws_url,
+            page["webSocketDebuggerUrl"],
             timeout=15,
             suppress_origin=True,
         )
+
+    def ensure_active_tab(self) -> bool:
+        """If a click opened a NEW tab, CDP stays bound to the old one. Detect a
+        newly-opened page target and switch the WebSocket to it (so the bot sees
+        and acts on the tab the page actually navigated to). Returns True if it
+        switched. Also re-attaches if the current tab was closed."""
+        try:
+            targets = self._get_targets()
+        except Exception:
+            return False
+        pages = [t for t in targets if t.get("type") == "page"]
+        if not pages:
+            return False
+        ids = {t.get("id") for t in pages}
+        seen = getattr(self, "_seen_targets", set())
+        new = [t for t in pages if t.get("id") not in seen]
+        self._seen_targets = ids
+
+        target = None
+        if new:
+            target = new[-1]                       # newest opened tab
+        elif self._target_id not in ids:
+            target = pages[-1]                     # current tab closed → take another
+
+        if target and target.get("id") != self._target_id:
+            try:
+                self._attach_ws(target)
+                self.install_cursor()
+                return True
+            except Exception:
+                return False
+        return False
 
     def install_cursor(self):
         """Inject a VISIBLE cursor dot that follows the bot's mouse and flashes
