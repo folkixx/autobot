@@ -95,7 +95,7 @@ class CDPBrowser:
         })();
         """
         try:
-            self._call("Runtime.evaluate", {"expression": js})
+            self._call("Runtime.evaluate", {"expression": js, "returnByValue": True})
         except Exception:
             pass
 
@@ -200,7 +200,7 @@ class CDPBrowser:
           return walk(document.body, 0).slice(0, 8000);
         })()
         """
-        result = self._call("Runtime.evaluate", {"expression": js})
+        result = self._call("Runtime.evaluate", {"expression": js, "returnByValue": True})
         return result.get("result", {}).get("value", "")
 
     def scan_elements(self) -> list:
@@ -249,7 +249,7 @@ class CDPBrowser:
           return JSON.stringify(out);
         })()
         """
-        result = self._call("Runtime.evaluate", {"expression": js})
+        result = self._call("Runtime.evaluate", {"expression": js, "returnByValue": True})
         raw = result.get("result", {}).get("value", "") or "[]"
         try:
             items = json.loads(raw)
@@ -303,7 +303,7 @@ class CDPBrowser:
           return hit;
         }})()
         """
-        result = self._call("Runtime.evaluate", {"expression": js})
+        result = self._call("Runtime.evaluate", {"expression": js, "returnByValue": True})
         return result.get("result", {}).get("value")
 
     def _find_element_coords(self, selector: str):
@@ -343,7 +343,7 @@ class CDPBrowser:
           return search(document, 0, 0);
         }})()
         """
-        result = self._call("Runtime.evaluate", {"expression": js})
+        result = self._call("Runtime.evaluate", {"expression": js, "returnByValue": True})
         return result.get("result", {}).get("value")
 
     def notifications(self) -> str:
@@ -366,7 +366,7 @@ class CDPBrowser:
           return out.join(' | ');
         })()
         """
-        result = self._call("Runtime.evaluate", {"expression": js})
+        result = self._call("Runtime.evaluate", {"expression": js, "returnByValue": True})
         return result.get("result", {}).get("value", "") or ""
 
     def get_url(self) -> str:
@@ -526,7 +526,7 @@ class CDPBrowser:
           return res;
         }})()
         """
-        return self._call("Runtime.evaluate", {"expression": js}).get("result", {}).get("value")
+        return self._call("Runtime.evaluate", {"expression": js, "returnByValue": True}).get("result", {}).get("value")
 
     def _set_value_index(self, index: int, text: str) -> bool:
         """Fallback: set the Nth element's value directly + fire input/change
@@ -565,7 +565,7 @@ class CDPBrowser:
           return done;
         }})()
         """
-        return bool(self._call("Runtime.evaluate", {"expression": js}).get("result", {}).get("value"))
+        return bool(self._call("Runtime.evaluate", {"expression": js, "returnByValue": True}).get("result", {}).get("value"))
 
     def _value_index(self, index: int) -> str:
         """Read the Nth element's current value (to verify a fill worked)."""
@@ -592,7 +592,7 @@ class CDPBrowser:
           return v;
         }})()
         """
-        return self._call("Runtime.evaluate", {"expression": js}).get("result", {}).get("value") or ""
+        return self._call("Runtime.evaluate", {"expression": js, "returnByValue": True}).get("result", {}).get("value") or ""
 
     def click_index(self, index: int) -> bool:
         """Click the Nth element. The visible cursor travels to it and flashes
