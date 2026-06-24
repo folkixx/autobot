@@ -332,6 +332,7 @@ def run_agent(
     on_ask_human: Callable[[str], Optional[str]] = None,   # ask via TG, returns reply
     on_remember: Callable[[str], None] = None,             # persist a learned instruction
     learned: str = "",                                     # preloaded learned instructions
+    knowledge: str = "",                                   # operator-curated always-on knowledge
     # Recording
     on_save_data: Callable[[dict], None] = None,           # persist collected data
     record_dir: str = "",                                  # folder to save per-step screenshots
@@ -340,6 +341,10 @@ def run_agent(
 ) -> str:
     import os as _os
     system = SYSTEM_PROMPT
+    if knowledge.strip():
+        system += ("\n\n## KNOWLEDGE BASE (operator-provided, ALWAYS in memory — "
+                   "use these facts/credentials/rules whenever relevant):\n"
+                   + knowledge.strip())
     if learned.strip():
         system += ("\n\n## LEARNED INSTRUCTIONS (from the operator — these are your "
                    "standing rules, ALWAYS follow them, they override defaults):\n"
@@ -352,6 +357,8 @@ def run_agent(
 
     on_log("Venice agent started.")
     on_log(f"Task: {instruction[:120]}...")
+    if knowledge.strip():
+        on_log(f"📚 Knowledge base loaded ({len(knowledge)} chars).")
     if learned.strip():
         # Recall remembered instructions out loud at every launch
         on_log(f"🧠 Recalled {learned.count(chr(10)) + 1} saved instruction(s):")

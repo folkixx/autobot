@@ -7,6 +7,7 @@ screenshots/
 flows/
 chat_log.txt
 learned_instructions.txt
+knowledge.txt
 *.log
 
 # Python

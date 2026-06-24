@@ -20,19 +20,21 @@ from config import VENICE_API_KEY, VENICE_BASE_URL, VENICE_MODEL
 _PROJECT_DIR = os.path.dirname(os.path.dirname(__file__))
 # Learned instructions the AI accumulates from operator replies (manual control)
 LEARNED_PATH = os.path.join(_PROJECT_DIR, "learned_instructions.txt")
+# Operator-curated knowledge that is ALWAYS in the bot's memory
+KNOWLEDGE_PATH = os.path.join(_PROJECT_DIR, "knowledge.txt")
 # Per-run recordings (screenshots, log, collected data)
 RUNS_DIR = os.path.join(_PROJECT_DIR, "runs")
 
-# ── Palette ───────────────────────────────────────────────────
-BG      = '#1e1e2e'
-BG2     = '#24243c'
-BG3     = '#313244'
-FG      = '#cdd6f4'
-ACCENT  = '#89b4fa'
+# ── Palette (deep "glass" dark) ───────────────────────────────
+BG      = '#0d0d16'   # near-black base (window shows desktop faintly via alpha)
+BG2     = '#16162a'   # frosted panel
+BG3     = '#23233f'   # raised element / input
+FG      = '#e6e6f5'
+ACCENT  = '#8aa0ff'   # indigo glass accent
 GREEN   = '#a6e3a1'
 RED     = '#f38ba8'
 YELLOW  = '#f9e2af'
-GRAY    = '#6c7086'
+GRAY    = '#7a7a96'
 MAUVE   = '#cba6f7'
 TEAL    = '#94e2d5'
 
@@ -143,6 +145,11 @@ class AIBotApp(tk.Tk):
         self.geometry("1100x720")
         self.minsize(800, 540)
         self.configure(bg=BG)
+        # Subtle window translucency for a frosted-glass feel
+        try:
+            self.attributes('-alpha', 0.965)
+        except Exception:
+            pass
 
         self._log_q: queue.Queue = queue.Queue()
         self._chat_q: queue.Queue = queue.Queue()
@@ -253,12 +260,68 @@ class AIBotApp(tk.Tk):
         self._nb.pack(fill='both', expand=True)
 
         task_tab = tk.Frame(self._nb, bg=BG)
-        self._nb.add(task_tab, text="  Task  ")
+        self._nb.add(task_tab, text="  ⚡ Task  ")
         self._build_task_tab(task_tab)
 
+        know_tab = tk.Frame(self._nb, bg=BG)
+        self._nb.add(know_tab, text="  🧠 Knowledge  ")
+        self._build_knowledge_tab(know_tab)
+
         chat_tab = tk.Frame(self._nb, bg=BG)
-        self._nb.add(chat_tab, text="  Chat with AI  ")
+        self._nb.add(chat_tab, text="  💬 Chat with AI  ")
         self._build_chat_tab(chat_tab)
+
+    # ── Knowledge tab (always-in-memory operator knowledge) ────
+
+    def _build_knowledge_tab(self, parent):
+        hdr = tk.Frame(parent, bg=BG2)
+        hdr.pack(fill='x')
+        tk.Label(hdr, text="ALWAYS-IN-MEMORY KNOWLEDGE", font=('Segoe UI', 8, 'bold'),
+                 bg=BG2, fg=MAUVE).pack(side='left', padx=10, pady=6)
+        tk.Label(hdr, text="Facts/rules the bot keeps in memory on every run",
+                 font=FONT_SM, bg=BG2, fg=GRAY).pack(side='left', pady=6)
+        self._know_status = tk.Label(hdr, text="", font=FONT_SM, bg=BG2, fg=GREEN)
+        self._know_status.pack(side='right', padx=10)
+        ttk.Button(hdr, text="💾 Save", style='Run.TButton',
+                   command=self._save_knowledge).pack(side='right', padx=6, pady=4)
+
+        self._knowledge = tk.Text(
+            parent, bg='#11111b', fg=FG, font=FONT_MONO,
+            borderwidth=0, highlightthickness=1,
+            highlightcolor=MAUVE, highlightbackground=BG3,
+            insertbackground=FG, wrap='word', undo=True,
+        )
+        self._knowledge.pack(fill='both', expand=True, pady=(0, 4))
+        self._bind_clipboard(self._knowledge)
+        self._build_context_menu(self._knowledge)
+        # Save on Ctrl+S too
+        self._knowledge.bind('<Control-KeyPress>',
+                             lambda e: (self._save_knowledge() or 'break') if e.keycode == 83 else None,
+                             add='+')
+
+        # Load existing knowledge
+        try:
+            if os.path.exists(KNOWLEDGE_PATH):
+                with open(KNOWLEDGE_PATH, encoding='utf-8') as f:
+                    self._knowledge.insert('1.0', f.read())
+            else:
+                self._knowledge.insert('1.0',
+                    "# Сюда впиши всё, что бот должен ВСЕГДА помнить.\n"
+                    "# Например — данные для входа, правила, особенности сайтов:\n"
+                    "#   sabotage.ink: логин folki, пароль zxcASD\n"
+                    "#   На форме логина сначала кликни поле, потом вводи\n")
+        except Exception:
+            pass
+
+    def _save_knowledge(self):
+        try:
+            txt = self._knowledge.get('1.0', 'end').strip()
+            with open(KNOWLEDGE_PATH, 'w', encoding='utf-8') as f:
+                f.write(txt)
+            import datetime as _dt
+            self._know_status.config(text=f"✓ saved {_dt.datetime.now():%H:%M:%S}")
+        except Exception as e:
+            self._know_status.config(text=f"save failed: {e}", fg=RED)
 
     # ── Left panels ───────────────────────────────────────────
 
@@ -329,11 +392,7 @@ class AIBotApp(tk.Tk):
             insertbackground=FG, wrap='word', undo=True,
         )
         self._instruction.pack(fill='x', pady=(0, 4))
-        self._instruction.bind('<Control-v>', lambda e: self._paste(self._instruction))
-        self._instruction.bind('<Control-V>', lambda e: self._paste(self._instruction))
-        self._instruction.bind('<Control-a>', lambda e: self._select_all(self._instruction))
-        self._instruction.bind('<Control-A>', lambda e: self._select_all(self._instruction))
-        self._instruction.bind('<Control-z>', lambda e: self._instruction.edit_undo() or 'break')
+        self._bind_clipboard(self._instruction)
         self._build_context_menu(self._instruction)
         self._instruction.insert('1.0',
             "Введи инструкцию для задачи здесь.\n"
@@ -436,10 +495,7 @@ class AIBotApp(tk.Tk):
 
         self._chat_input.bind('<Return>',    self._on_chat_enter)
         self._chat_input.bind('<KP_Enter>',  self._on_chat_enter)
-        self._chat_input.bind('<Control-v>', lambda e: self._paste(self._chat_input))
-        self._chat_input.bind('<Control-V>', lambda e: self._paste(self._chat_input))
-        self._chat_input.bind('<Control-a>', lambda e: self._select_all(self._chat_input))
-        self._chat_input.bind('<Control-A>', lambda e: self._select_all(self._chat_input))
+        self._bind_clipboard(self._chat_input)
         self._build_context_menu(self._chat_input)
 
         self._send_btn = ttk.Button(row, text="Send ↵", style='Send.TButton',
@@ -487,6 +543,27 @@ class AIBotApp(tk.Tk):
         widget.tag_add('sel', '1.0', 'end')
         widget.mark_set('insert', '1.0')
         return 'break'
+
+    def _bind_clipboard(self, widget: tk.Text, read_only: bool = False):
+        """Layout-independent Ctrl+C/V/X/A/Z. The default <Control-v> binding
+        fails on a Russian keyboard layout (keysym becomes Cyrillic), so we
+        dispatch on keycode (Windows virtual-key codes, same on any layout)."""
+        def on_key(e):
+            kc = e.keycode
+            if kc == 86 and not read_only:        # V — paste
+                return self._paste(widget)
+            if kc == 67:                          # C — copy
+                widget.event_generate('<<Copy>>'); return 'break'
+            if kc == 88 and not read_only:        # X — cut
+                widget.event_generate('<<Cut>>'); return 'break'
+            if kc == 65:                          # A — select all
+                return self._select_all(widget)
+            if kc == 90 and not read_only:        # Z — undo
+                try: widget.edit_undo()
+                except Exception: pass
+                return 'break'
+            return None
+        widget.bind('<Control-KeyPress>', on_key)
 
     def _build_context_menu(self, widget: tk.Text, read_only: bool = False):
         menu = tk.Menu(widget, tearoff=0, bg=BG3, fg=FG,
@@ -638,6 +715,11 @@ class AIBotApp(tk.Tk):
         if not instruction or instruction.startswith('Введи инструкцию'):
             messagebox.showinfo("Пусто", "Напиши инструкцию для задачи.", parent=self)
             return
+        # Persist knowledge edits now (main thread — Tk widget access)
+        try:
+            self._save_knowledge()
+        except Exception:
+            pass
         self._nb.select(0)  # switch to Task tab
         self._running = True
         self._stop_flag = False
@@ -846,6 +928,15 @@ class AIBotApp(tk.Tk):
         except Exception:
             pass
 
+        # Always-in-memory knowledge (saved on the main thread at _start)
+        knowledge = ""
+        try:
+            if os.path.exists(KNOWLEDGE_PATH):
+                with open(KNOWLEDGE_PATH, encoding="utf-8") as f:
+                    knowledge = f.read()
+        except Exception:
+            pass
+
         # ── Run agent ─────────────────────────────────────────
         try:
             final = run_agent(
@@ -861,6 +952,7 @@ class AIBotApp(tk.Tk):
                 on_ask_human=do_ask_human,
                 on_remember=do_remember,
                 learned=learned,
+                knowledge=knowledge,
                 on_save_data=do_save_data,
                 record_dir=run_dir,
                 on_operator_msgs=get_operator_msgs,
