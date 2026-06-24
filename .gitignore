@@ -1,0 +1,18 @@
+# Secrets — never push to GitHub
+config.py
+
+# Runtime output
+runs/
+screenshots/
+flows/
+chat_log.txt
+learned_instructions.txt
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+ui.zip
