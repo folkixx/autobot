@@ -774,10 +774,7 @@ class AIBotApp(tk.Tk):
                     pass
                 self._session_uuid = None
                 return {"error": f"CDP connect failed: {e}"}
-            if self._browser.maximize():
-                log("Browser maximized ✓")
-            else:
-                log("Browser ready ✓ (maximize skipped)")
+            log("Browser ready ✓")
             return result
 
         def do_close_browser():

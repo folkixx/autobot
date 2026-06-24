@@ -57,6 +57,46 @@ class CDPBrowser:
             suppress_origin=True,
         )
 
+    def install_cursor(self):
+        """Inject a VISIBLE cursor dot that follows the bot's mouse and flashes
+        on click, so the operator can watch what the bot is doing. It's driven
+        by the real mouse events the bot dispatches (display only — the actual
+        interaction is genuine cursor movement)."""
+        js = r"""
+        (function(){
+          function ensure(){
+            var d = document.getElementById('__botCursor');
+            if(!d){
+              d = document.createElement('div');
+              d.id='__botCursor';
+              d.style.cssText='position:fixed;width:22px;height:22px;border-radius:50%;'+
+                'background:rgba(255,60,60,0.55);border:2px solid #fff;'+
+                'box-shadow:0 0 10px rgba(0,0,0,0.6);z-index:2147483647;'+
+                'pointer-events:none;transform:translate(-50%,-50%);left:-50px;top:-50px;'+
+                'transition:left .05s linear,top .05s linear,width .1s,height .1s,background .1s;';
+              (document.body||document.documentElement).appendChild(d);
+            }
+            return d;
+          }
+          ensure();
+          if(window.__botCursorListener) return;
+          window.__botCursorListener=true;
+          document.addEventListener('mousemove',function(e){
+            var d=ensure(); d.style.left=e.clientX+'px'; d.style.top=e.clientY+'px';
+          },true);
+          document.addEventListener('mousedown',function(e){
+            var d=ensure(); d.style.background='rgba(60,170,255,0.9)';
+            d.style.width='32px'; d.style.height='32px';
+            setTimeout(function(){ d.style.background='rgba(255,60,60,0.55)';
+              d.style.width='22px'; d.style.height='22px'; },220);
+          },true);
+        })();
+        """
+        try:
+            self._call("Runtime.evaluate", {"expression": js})
+        except Exception:
+            pass
+
     def maximize(self) -> bool:
         """Maximize the browser window to fill the screen (via CDP, not OS)."""
         try:
