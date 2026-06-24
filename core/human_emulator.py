@@ -30,9 +30,9 @@ def mouse_path(x0: float, y0: float, x1: float, y1: float) -> List[Tuple[int, in
         y0 + (y1 - y0) * 0.75 + random.uniform(-jitter, jitter),
     )
 
-    # Fewer points = fewer CDP round-trips = much faster, while the curve shape
-    # (what anti-fraud actually inspects) is preserved.
-    steps = max(6, min(18, int(dist / 28)))
+    # Casual user profile: more points + ease = a slower, smoother, slightly
+    # wandering motion (not a robotic straight dash).
+    steps = max(14, min(40, int(dist / 12)))
     path: List[Tuple[int, int]] = []
     for i in range(steps + 1):
         t = i / steps
@@ -43,14 +43,35 @@ def mouse_path(x0: float, y0: float, x1: float, y1: float) -> List[Tuple[int, in
     return path
 
 
-def action_delay(min_ms: int = 200, max_ms: int = 1200) -> None:
-    """Pause between bot actions to mimic human reaction time."""
-    time.sleep(random.uniform(min_ms, max_ms) / 1000)
+# ── Behaviour profile ─────────────────────────────────────────────────────────
+# "Casual American, ~30, uses a computer 3-4x/week, mostly a phone user."
+# Not proficient: moves the mouse unhurriedly, types slowly with hesitation,
+# pauses to read before acting.
+
+def move_step_delay() -> float:
+    """Seconds between mouse path points — unhurried cursor travel."""
+    return random.uniform(0.006, 0.018)
 
 
 def keystroke_delay() -> float:
-    """Seconds to sleep between keystrokes — fast-but-human (~15-40 cps)."""
-    if random.random() < 0.05:
-        # Occasional longer pause (thinking / hesitation)
-        return random.uniform(0.10, 0.28)
-    return random.uniform(0.02, 0.07)
+    """Seconds between keystrokes — a slow hunt-and-peck typist (~3-6 cps)."""
+    r = random.random()
+    if r < 0.12:
+        # frequent thinking / looking-at-keyboard pause
+        return random.uniform(0.45, 1.1)
+    if r < 0.25:
+        return random.uniform(0.22, 0.4)
+    return random.uniform(0.10, 0.20)
+
+
+def reaction_delay() -> float:
+    """Seconds a casual user spends reading/orienting before the next action."""
+    r = random.random()
+    if r < 0.15:
+        return random.uniform(2.5, 4.5)   # distracted / reading carefully
+    return random.uniform(0.8, 2.2)
+
+
+def action_delay(min_ms: int = 200, max_ms: int = 1200) -> None:
+    """Pause between bot actions to mimic human reaction time."""
+    time.sleep(random.uniform(min_ms, max_ms) / 1000)

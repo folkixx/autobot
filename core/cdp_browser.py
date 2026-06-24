@@ -9,7 +9,9 @@ import base64
 import threading
 import urllib.request
 import websocket   # websocket-client library
-from core.human_emulator import mouse_path, keystroke_delay, action_delay
+from core.human_emulator import (
+    mouse_path, keystroke_delay, action_delay, move_step_delay, reaction_delay,
+)
 
 
 class CDPBrowser:
@@ -383,23 +385,24 @@ class CDPBrowser:
         })
 
     def click(self, x: float, y: float):
-        """Human-like curved move (from last cursor position) then click."""
+        """Human-like curved move (from last cursor position) then click,
+        at a casual/unhurried pace."""
         sx, sy = getattr(self, "_last_xy", None) or (
             random.uniform(100, 900), random.uniform(100, 600))
         pts = mouse_path(sx, sy, x, y)
         for px, py in pts[:-1]:
             self.mouse_move(px, py)
-            time.sleep(random.uniform(0.001, 0.003))
+            time.sleep(move_step_delay())
         self.mouse_move(x, y)
         self._last_xy = (x, y)
-        time.sleep(random.uniform(0.02, 0.06))
+        time.sleep(random.uniform(0.12, 0.35))   # settle before pressing
         # `buttons: 1` (left button bitmask) is required for many frameworks to
         # treat this as a genuine click and fire onClick/submit handlers.
         self._call("Input.dispatchMouseEvent", {
             "type": "mousePressed", "x": x, "y": y,
             "button": "left", "buttons": 1, "clickCount": 1,
         })
-        time.sleep(random.uniform(0.02, 0.06))
+        time.sleep(random.uniform(0.05, 0.14))
         self._call("Input.dispatchMouseEvent", {
             "type": "mouseReleased", "x": x, "y": y,
             "button": "left", "buttons": 1, "clickCount": 1,
@@ -592,49 +595,36 @@ class CDPBrowser:
         return self._call("Runtime.evaluate", {"expression": js}).get("result", {}).get("value") or ""
 
     def click_index(self, index: int) -> bool:
-        """Click the Nth interactive element reliably (JS click by index) with
-        a humanized mouse move to its position for realism."""
-        info = self._locate_index(index, "click")
+        """Click the Nth element. The visible cursor travels to it and flashes
+        (real dispatched mouse events at the element's LIVE coords), and a JS
+        click by index guarantees the action even if pixels are slightly off."""
+        info = self._locate_index(index, "scroll")   # fresh coords, scrolled into view
         if not info:
             return False
-        # Visual/anti-fraud mouse movement to the element (JS already clicked)
-        try:
-            self._move_only(info["x"], info["y"])
-        except Exception:
-            pass
+        self.click(info["x"], info["y"])             # visible cursor + real press
+        self._locate_index(index, "click")           # JS click — guaranteed hit
         return True
 
     def fill_index(self, index: int, text: str) -> bool:
-        """Fill the Nth interactive element reliably: focus by index (JS),
-        humanized mouse move, type via insertText, then verify and fall back to
-        a direct value-set if the field is still empty."""
-        info = self._locate_index(index, "focus")
+        """Fill the Nth element: cursor travels to it and clicks (visible),
+        JS focus guarantees the field is active, type slowly, then verify and
+        fall back to a direct value-set if typing didn't land."""
+        info = self._locate_index(index, "scroll")
         if not info:
             return False
-        try:
-            self._move_only(info["x"], info["y"])
-        except Exception:
-            pass
+        self.click(info["x"], info["y"])             # visible cursor + real click
+        self._locate_index(index, "focus")           # guarantee focus by index
+        time.sleep(random.uniform(0.1, 0.25))
         # Clear any existing value
         self._call("Input.dispatchKeyEvent", {"type": "keyDown", "key": "a", "modifiers": 8})
         self._call("Input.dispatchKeyEvent", {"type": "keyUp", "key": "a", "modifiers": 8})
         self.press_key("Backspace")
-        time.sleep(0.03)
+        time.sleep(0.05)
         self.type_text(text)
         # Verify it landed; if not, force it via JS + events
-        if self._value_index(index).strip() != text.strip():
+        if self._value_index(index).strip() != str(text).strip():
             self._set_value_index(index, text)
         return True
-
-    def _move_only(self, x: float, y: float):
-        """Humanized mouse move WITHOUT a click (won't blur a focused field)."""
-        sx, sy = getattr(self, "_last_xy", None) or (
-            random.uniform(100, 900), random.uniform(100, 600))
-        for px, py in mouse_path(sx, sy, x, y)[:-1]:
-            self.mouse_move(px, py)
-            time.sleep(random.uniform(0.001, 0.003))
-        self.mouse_move(x, y)
-        self._last_xy = (x, y)
 
     # ── Scroll ────────────────────────────────────────────────
 
