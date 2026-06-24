@@ -351,6 +351,75 @@ def _build_page_state(browser, use_screenshot: bool, on_log=None, save_png: str 
         }
 
 
+# ── Operator pause/resume conversation ────────────────────────────────────────
+
+_PAUSE_WORDS  = {"стоп", "стой", "пауза", "подожди", "stop", "pause", "wait", "hold"}
+_RESUME_WORDS = {"продолжай", "продолжить", "дальше", "давай", "поехали",
+                 "continue", "go", "resume", "proceed", "ok"}
+
+
+def _operator_cmd(text: str) -> Optional[str]:
+    """Classify an operator message: 'pause', 'resume', or None (normal msg)."""
+    t = (text or "").strip().lower()
+    first = t.split()[0] if t.split() else ""
+    if first in _PAUSE_WORDS or t in _PAUSE_WORDS:
+        return "pause"
+    if first in _RESUME_WORDS or t in _RESUME_WORDS:
+        return "resume"
+    return None
+
+
+def _answer_operator(messages: list) -> str:
+    """Ask Venice for a plain-language reply to the operator (not a JSON action)."""
+    tmp = messages + [{
+        "role": "user",
+        "content": ("The task is PAUSED and the operator is chatting with you. "
+                    "Reply in plain natural language (NOT JSON, no action) — answer "
+                    "their question or discuss. Be concise and in their language."),
+    }]
+    try:
+        return _call_venice(tmp).strip() or "(пусто)"
+    except Exception as e:
+        return f"(ошибка ответа: {e})"
+
+
+def _pause_dialogue(messages, on_log, stop_flag, on_tg_send, on_tg_wait, on_remember):
+    """Operator wrote 'стоп': freeze the task and chat in Telegram. The agent
+    answers questions in plain text and only returns (resumes) when the operator
+    writes 'продолжай'. Everything discussed stays in `messages` so the agent
+    continues informed."""
+    if not (on_tg_send and on_tg_wait):
+        on_log("Pause requested but Telegram chat not available.")
+        return
+    on_log("⏸ Paused by operator — dialogue mode. Send «продолжай» to resume.")
+    on_tg_send("⏸ Остановился. Спрашивай и уточняй — отвечу. "
+               "Напиши «продолжай», когда можно работать дальше.")
+    while not stop_flag():
+        msg = on_tg_wait()          # blocks for the next operator message
+        if msg is None:
+            continue
+        cmd = _operator_cmd(msg)
+        if cmd == "resume":
+            messages.append({"role": "user", "content":
+                "Operator reviewed and said CONTINUE. Resume the task now, applying "
+                "everything we just discussed."})
+            on_log("▶️ Resumed by operator.")
+            on_tg_send("▶️ Продолжаю.")
+            return
+        if cmd == "pause":
+            on_tg_send("Уже на паузе. Задавай вопросы или напиши «продолжай».")
+            continue
+        # A normal message — discuss it
+        on_log(f"💬 Operator: {msg[:120]}")
+        messages.append({"role": "user", "content": f"Operator (paused) says: {msg}"})
+        answer = _answer_operator(messages)
+        messages.append({"role": "assistant", "content": answer})
+        on_log(f"🤖 Reply: {answer[:120]}")
+        on_tg_send(answer)
+        if on_remember:
+            on_remember(f"Discussed while paused: {msg} -> {answer[:200]}")
+
+
 # ── Main agentic loop ─────────────────────────────────────────────────────────
 
 def run_agent(
@@ -376,6 +445,8 @@ def run_agent(
     record_dir: str = "",                                  # folder to save per-step screenshots
     # Live operator interrupts: returns a list of unsolicited Telegram messages
     on_operator_msgs: Callable[[], list] = None,
+    on_tg_send: Callable[[str], None] = None,   # send a message to the operator
+    on_tg_wait: Callable[[], Optional[str]] = None,  # block for next operator message
 ) -> str:
     import os as _os
     system = SYSTEM_PROMPT
@@ -419,17 +490,28 @@ def run_agent(
 
         on_log(f"── Step {step}/{MAX_STEPS} ──")
 
-        # Live operator interrupts — anything the operator typed in Telegram
-        # since the last step becomes a high-priority instruction right now.
+        # Live operator messages from Telegram since the last step.
         if on_operator_msgs:
             try:
                 for msg in (on_operator_msgs() or []):
-                    on_log(f"📩 Operator interrupt: {msg[:120]}")
-                    messages.append({
-                        "role": "user",
-                        "content": (f"OPERATOR INTERRUPT (follow this immediately, "
-                                    f"it overrides your current plan): {msg}")
-                    })
+                    cmd = _operator_cmd(msg)
+                    if cmd == "pause":
+                        _pause_dialogue(messages, on_log, stop_flag,
+                                        on_tg_send, on_tg_wait, on_remember)
+                        if stop_flag():
+                            on_log("Stopped by user.")
+                            return "Stopped"
+                    elif cmd == "resume":
+                        pass  # nothing to resume when not paused
+                    else:
+                        on_log(f"📩 Operator interrupt: {msg[:120]}")
+                        messages.append({
+                            "role": "user",
+                            "content": (f"OPERATOR INTERRUPT (follow this immediately, "
+                                        f"it overrides your current plan): {msg}")
+                        })
+                        if on_remember:
+                            on_remember(f"Operator standing instruction: {msg}")
             except Exception:
                 pass
 

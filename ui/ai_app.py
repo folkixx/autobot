@@ -955,9 +955,16 @@ class AIBotApp(tk.Tk):
                 if not m:
                     break
                 self._log_q.put(('log', f"💬 You (live): {m}", 'notify'))
-                do_remember(f"Operator standing instruction: {m}")
-                out.append(m)
+                out.append(m)   # remember/pause handled in the agent
             return out
+
+        def do_tg_send(text):
+            telegram_notify.send_message(f"🤖 {text}")
+            self._log_q.put(('log', f"🤖 → TG: {text[:120]}", 'notify'))
+
+        def do_tg_wait():
+            return telegram_notify.wait_for_reply(
+                stop_flag=lambda: self._stop_flag, timeout=3600.0)
 
         learned = ""
         try:
@@ -1012,6 +1019,8 @@ class AIBotApp(tk.Tk):
                 on_save_data=do_save_data,
                 record_dir=run_dir,
                 on_operator_msgs=get_operator_msgs,
+                on_tg_send=do_tg_send,
+                on_tg_wait=do_tg_wait,
             )
             if run_dir:
                 log(f"📁 Run saved to: {run_dir}")
