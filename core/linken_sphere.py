@@ -139,13 +139,14 @@ def check_proxy(uuid: str, on_log=None) -> dict:
     return result
 
 
-def start_session(uuid: str, headless: bool = False) -> dict:
-    """Start a session. Returns {debug_port, uuid} or {error}."""
-    result = _post("/sessions/start", {
-        "uuid": uuid,
-        "headless": headless,
-    })
-    return result
+def start_session(uuid: str, headless: bool = False, chromium_args=None) -> dict:
+    """Start a session. Returns {debug_port, uuid} or {error}.
+    chromium_args lets us open the window maximized from the start (consistent
+    coordinates) instead of resizing after, which desynced clicks."""
+    body = {"uuid": uuid, "headless": headless}
+    if chromium_args:
+        body["chromium_args"] = chromium_args
+    return _post("/sessions/start", body)
 
 
 def stop_session(uuid: str) -> bool:
@@ -187,7 +188,8 @@ def launch_session(
 
     time.sleep(1.0)
 
-    start = start_session(uuid)
+    # Open the window maximized from the start — consistent coordinates.
+    start = start_session(uuid, chromium_args=["--start-maximized"])
 
     # LS sometimes returns a list of session objects instead of a single dict
     if isinstance(start, list):
