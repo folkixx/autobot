@@ -188,8 +188,18 @@ def launch_session(
 
     time.sleep(1.0)
 
-    # Open the window maximized from the start — consistent coordinates.
-    start = start_session(uuid, chromium_args=["--start-maximized"])
+    # Try to open maximized from the start (consistent coords). LS is picky
+    # about the chromium_args type, so try a couple of formats and ALWAYS
+    # fall back to a plain start so the browser opens no matter what.
+    start = None
+    for args in ("--start-maximized", None):
+        start = start_session(uuid, chromium_args=args)
+        if not (isinstance(start, dict) and "error" in start):
+            if on_log and args:
+                on_log(f"   LS started maximized (chromium_args={args!r})")
+            break
+        if on_log:
+            on_log(f"   start chromium_args={args!r} rejected, falling back")
 
     # LS sometimes returns a list of session objects instead of a single dict
     if isinstance(start, list):
