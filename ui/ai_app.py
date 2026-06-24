@@ -798,20 +798,28 @@ class AIBotApp(tk.Tk):
         def do_ask_human(question: str):
             self._log_q.put(('notify', f"❓ {question}"))
             img = None
+            url = ""
             if self._browser is not None:
                 try: img = self._browser.screenshot()
+                except Exception: pass
+                try: url = self._browser.get_url()
                 except Exception: pass
             reply = telegram_notify.ask(
                 question, screenshot=img,
                 stop_flag=lambda: self._stop_flag, timeout=1800.0, on_log=log)
             if reply:
                 self._log_q.put(('log', f"💬 You: {reply}", 'notify'))
+                # AUTO-REMEMBER: persist every operator instruction so it
+                # survives restarts (the model rarely calls remember itself).
+                page = f" (on {url})" if url else ""
+                do_remember(f"When asked \"{question[:120]}\"{page} — do: {reply}")
             return reply
 
         def do_remember(note: str):
             try:
                 with open(LEARNED_PATH, "a", encoding="utf-8") as f:
                     f.write(note.strip() + "\n")
+                log(f"🧠 Remembered: {note.strip()[:90]}")
             except Exception as e:
                 log(f"remember failed: {e}")
 
