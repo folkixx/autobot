@@ -175,6 +175,38 @@ def _call_venice(messages: list) -> str:
     return content
 
 
+def _strip_old_images(messages: list) -> None:
+    """Replace screenshots in ALL messages except the most recent image-bearing
+    one with a text placeholder. Old images dominate token cost and latency."""
+    # find index of the last message that contains an image
+    last_img = -1
+    for i, m in enumerate(messages):
+        c = m.get("content")
+        if isinstance(c, list) and any(p.get("type") == "image_url" for p in c):
+            last_img = i
+    for i, m in enumerate(messages):
+        if i == last_img:
+            continue
+        c = m.get("content")
+        if isinstance(c, list):
+            new = []
+            for p in c:
+                if p.get("type") == "image_url":
+                    new.append({"type": "text", "text": "[screenshot omitted]"})
+                else:
+                    new.append(p)
+            m["content"] = new
+
+
+def _trim_history(messages: list, keep: int = 14) -> None:
+    """Cap conversation length: keep system + task + the last `keep` messages."""
+    if len(messages) <= keep + 2:
+        return
+    head = messages[:2]            # system prompt + original task
+    tail = messages[-keep:]
+    messages[:] = head + tail
+
+
 def _parse_actions(raw: str) -> list:
     """Parse the model output into a LIST of action dicts. Accepts a single
     object, a top-level JSON array, or an {"actions":[...]} wrapper."""
@@ -415,6 +447,12 @@ def run_agent(
                 messages.append({"role": "user", "content": f"Browser error: {e}. What next?"})
         else:
             messages.append({"role": "user", "content": "Browser is not open. What is the next action?"})
+
+        # Speed/cost: keep only the LATEST screenshot in history (old images
+        # cost the most tokens and slow every call); replace older ones with a
+        # short text placeholder. Also cap history length.
+        _strip_old_images(messages)
+        _trim_history(messages, keep=14)
 
         # Ask Venice
         try:

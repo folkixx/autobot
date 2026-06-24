@@ -395,14 +395,14 @@ class CDPBrowser:
             time.sleep(move_step_delay())
         self.mouse_move(x, y)
         self._last_xy = (x, y)
-        time.sleep(random.uniform(0.12, 0.35))   # settle before pressing
+        time.sleep(random.uniform(0.04, 0.12))   # settle before pressing
         # `buttons: 1` (left button bitmask) is required for many frameworks to
         # treat this as a genuine click and fire onClick/submit handlers.
         self._call("Input.dispatchMouseEvent", {
             "type": "mousePressed", "x": x, "y": y,
             "button": "left", "buttons": 1, "clickCount": 1,
         })
-        time.sleep(random.uniform(0.05, 0.14))
+        time.sleep(random.uniform(0.03, 0.08))
         self._call("Input.dispatchMouseEvent", {
             "type": "mouseReleased", "x": x, "y": y,
             "button": "left", "buttons": 1, "clickCount": 1,

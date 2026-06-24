@@ -30,9 +30,9 @@ def mouse_path(x0: float, y0: float, x1: float, y1: float) -> List[Tuple[int, in
         y0 + (y1 - y0) * 0.75 + random.uniform(-jitter, jitter),
     )
 
-    # Casual user profile: more points + ease = a slower, smoother, slightly
-    # wandering motion (not a robotic straight dash).
-    steps = max(14, min(40, int(dist / 12)))
+    # Office-worker profile: brisk, fairly direct motion (still curved/eased,
+    # but fewer points = snappier travel).
+    steps = max(8, min(22, int(dist / 20)))
     path: List[Tuple[int, int]] = []
     for i in range(steps + 1):
         t = i / steps
@@ -44,32 +44,30 @@ def mouse_path(x0: float, y0: float, x1: float, y1: float) -> List[Tuple[int, in
 
 
 # ── Behaviour profile ─────────────────────────────────────────────────────────
-# "Casual American, ~30, uses a computer 3-4x/week, mostly a phone user."
-# Not proficient: moves the mouse unhurriedly, types slowly with hesitation,
-# pauses to read before acting.
+# "Office worker, ~30, on a computer all day, types constantly."
+# Proficient and quick: fast touch typing, direct confident cursor, short
+# reaction times — but still human (micro-variance, the odd brief pause).
 
 def move_step_delay() -> float:
-    """Seconds between mouse path points — unhurried cursor travel."""
-    return random.uniform(0.006, 0.018)
+    """Seconds between mouse path points — quick, confident travel."""
+    return random.uniform(0.002, 0.006)
 
 
 def keystroke_delay() -> float:
-    """Seconds between keystrokes — a slow hunt-and-peck typist (~3-6 cps)."""
+    """Seconds between keystrokes — a fast touch typist (~12-28 cps)."""
     r = random.random()
-    if r < 0.12:
-        # frequent thinking / looking-at-keyboard pause
-        return random.uniform(0.45, 1.1)
-    if r < 0.25:
-        return random.uniform(0.22, 0.4)
-    return random.uniform(0.10, 0.20)
+    if r < 0.04:
+        # rare brief pause (glance away / think)
+        return random.uniform(0.15, 0.30)
+    return random.uniform(0.035, 0.08)
 
 
 def reaction_delay() -> float:
-    """Seconds a casual user spends reading/orienting before the next action."""
+    """Seconds before the next action — short, this user works fast."""
     r = random.random()
-    if r < 0.15:
-        return random.uniform(2.5, 4.5)   # distracted / reading carefully
-    return random.uniform(0.8, 2.2)
+    if r < 0.10:
+        return random.uniform(1.2, 2.2)   # occasional read
+    return random.uniform(0.3, 0.9)
 
 
 def action_delay(min_ms: int = 200, max_ms: int = 1200) -> None:
