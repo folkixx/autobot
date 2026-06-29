@@ -501,12 +501,16 @@ def run_agent(
         for ln in [l for l in learned.splitlines() if l.strip()][:20]:
             on_log(f"     • {ln.strip()[:120]}")
 
-    for step in range(1, MAX_STEPS + 1):
+    step = 0
+    while True:
+        step += 1
+        if MAX_STEPS and step > MAX_STEPS:   # MAX_STEPS == 0 → unlimited
+            break
         if stop_flag():
             on_log("Stopped by user.")
             return "Stopped"
 
-        on_log(f"── Step {step}/{MAX_STEPS} ──")
+        on_log(f"── Step {step}{('/' + str(MAX_STEPS)) if MAX_STEPS else ''} ──")
 
         # Live operator messages from Telegram since the last step.
         if on_operator_msgs:
