@@ -101,6 +101,81 @@ class CDPBrowser:
                 return False
         return False
 
+    # ── Tab management ────────────────────────────────────────
+
+    def list_tabs(self) -> list:
+        """All open page tabs: {index, title, url, active}."""
+        out = []
+        try:
+            pages = [t for t in self._get_targets() if t.get("type") == "page"]
+        except Exception:
+            return out
+        for i, t in enumerate(pages):
+            out.append({
+                "index": i,
+                "title": (t.get("title") or "").strip()[:40],
+                "url": (t.get("url") or "")[:70],
+                "active": t.get("id") == self._target_id,
+            })
+        return out
+
+    def switch_tab(self, index: int) -> bool:
+        """Switch the bot to tab #index (as shown in list_tabs)."""
+        pages = [t for t in self._get_targets() if t.get("type") == "page"]
+        if 0 <= index < len(pages):
+            self._attach_ws(pages[index])
+            self.install_cursor()
+            self._seen_targets = {t.get("id") for t in pages}
+            return True
+        return False
+
+    def close_tab(self, index: int = None) -> bool:
+        """Close tab #index (default: the current tab). Re-attaches to another
+        tab if the current one was closed."""
+        pages = [t for t in self._get_targets() if t.get("type") == "page"]
+        if index is None:
+            target = next((t for t in pages if t.get("id") == self._target_id), None)
+        elif 0 <= index < len(pages):
+            target = pages[index]
+        else:
+            return False
+        if not target:
+            return False
+        tid = target.get("id")
+        try:
+            urllib.request.urlopen(
+                f"http://127.0.0.1:{self._port}/json/close/{tid}", timeout=5).read()
+        except Exception:
+            try:
+                self._call("Target.closeTarget", {"targetId": tid})
+            except Exception:
+                return False
+        if tid == self._target_id:
+            time.sleep(0.3)
+            rest = [t for t in self._get_targets()
+                    if t.get("type") == "page" and t.get("id") != tid]
+            if rest:
+                self._attach_ws(rest[-1])
+                self.install_cursor()
+                self._seen_targets = {t.get("id") for t in rest}
+        return True
+
+    def new_tab(self, url: str = "about:blank") -> bool:
+        """Open a new tab and switch the bot to it."""
+        ok = False
+        for opener in (
+            lambda: urllib.request.urlopen(
+                f"http://127.0.0.1:{self._port}/json/new?{url}", timeout=5).read(),
+            lambda: self._call("Target.createTarget", {"url": url}),
+        ):
+            try:
+                opener(); ok = True; break
+            except Exception:
+                continue
+        time.sleep(0.5)
+        self.ensure_active_tab()
+        return ok
+
     def install_cursor(self):
         """Inject a VISIBLE cursor dot that follows the bot's mouse and flashes
         on click, so the operator can watch what the bot is doing. It's driven

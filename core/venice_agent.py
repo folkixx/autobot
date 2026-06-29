@@ -115,10 +115,13 @@ from the screenshot.
   — Use when the task is impossible to complete.
 
 ## Tabs
-If a click opens a NEW TAB, the system automatically switches you to it — the
-next element list and screenshot are from the new tab. So after a click that you
-expect opens a new page, just look at the refreshed elements and continue; do
-NOT assume you are stuck on the old page.
+If a click opens a NEW TAB you are switched to it automatically — just read the
+refreshed elements. When several tabs are open they are listed under "OPEN TABS"
+with an index. Manage them:
+  {"action":"switch_tab","index":0}   — switch to tab N
+  {"action":"close_tab","index":1}    — close tab N (omit index = current tab)
+  {"action":"new_tab","url":"https://..."}  — open a new tab
+Close tabs you no longer need to keep things tidy.
 
 ## Manual-control behaviour
 When the task is vague or you are not confident about the next step, prefer
@@ -324,6 +327,17 @@ def _build_page_state(browser, use_screenshot: bool, on_log=None, save_png: str 
 
     notice_block = f"\nPAGE MESSAGES (errors/alerts): {notices}\n" if notices else ""
 
+    # Open tabs (so the agent can switch/close them)
+    tabs_block = ""
+    try:
+        tabs = browser.list_tabs()
+        if len(tabs) > 1:
+            tlines = [f"  tab {t['index']}{' (active)' if t['active'] else ''}: "
+                      f"{t['title']} — {t['url']}" for t in tabs]
+            tabs_block = "OPEN TABS (switch_tab/close_tab by index):\n" + "\n".join(tlines) + "\n"
+    except Exception:
+        pass
+
     instructions = (
         "Interactive elements below — each has an index [N] and its screen "
         "coordinates @ (x,y). To act on one, reference it by index N "
@@ -350,8 +364,8 @@ def _build_page_state(browser, use_screenshot: bool, on_log=None, save_png: str 
                 },
                 {
                     "type": "text",
-                    "text": (f"URL: {url}\nTitle: {title}\n{notice_block}\n{instructions}\n\n"
-                             f"{elements}\n\nWhat is the next action?"),
+                    "text": (f"URL: {url}\nTitle: {title}\n{notice_block}{tabs_block}\n"
+                             f"{instructions}\n\n{elements}\n\nWhat is the next action?"),
                 },
             ],
         }
@@ -364,8 +378,8 @@ def _build_page_state(browser, use_screenshot: bool, on_log=None, save_png: str 
                 pass
         return {
             "role": "user",
-            "content": (f"URL: {url}\nTitle: {title}\n{notice_block}\n{instructions}\n\n"
-                        f"{elements}\n\nNext action?"),
+            "content": (f"URL: {url}\nTitle: {title}\n{notice_block}{tabs_block}\n"
+                        f"{instructions}\n\n{elements}\n\nNext action?"),
         }
 
 
@@ -668,7 +682,8 @@ def run_agent(
                 # ── Browser actions ─────────────────────────────
                 elif a in ("navigate", "click", "click_coords", "fill",
                            "select_option", "select", "press", "scroll",
-                           "wait", "screenshot"):
+                           "wait", "screenshot",
+                           "switch_tab", "close_tab", "new_tab"):
                     if browser is None:
                         result = "No browser open. Use open_browser first."
                     else:
@@ -768,6 +783,23 @@ def _execute_browser_action(browser, action: dict, on_notify) -> str:
         ok = browser.select_option(idx, val)
         time.sleep(random.uniform(0.2, 0.5))
         return f"Selected '{val}' in [{idx}]" if ok else f"Option '{val}' not found in [{idx}]"
+
+    elif a == "switch_tab":
+        idx = _resolve_index(action)
+        ok = browser.switch_tab(idx if idx is not None else 0)
+        time.sleep(random.uniform(0.2, 0.5))
+        return f"Switched to tab {idx}" if ok else f"Tab {idx} not found"
+
+    elif a == "close_tab":
+        idx = _resolve_index(action)   # None → current tab
+        ok = browser.close_tab(idx)
+        time.sleep(random.uniform(0.2, 0.5))
+        return "Closed tab" if ok else "close_tab failed"
+
+    elif a == "new_tab":
+        url = action.get("url", "about:blank")
+        browser.new_tab(url)
+        return f"Opened new tab: {url}"
 
     elif a == "press":
         browser.press_key(action["key"])
