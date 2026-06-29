@@ -11,7 +11,11 @@ import time
 import urllib.request
 from typing import Callable, Optional
 from core.human_emulator import reaction_delay
-from config import VENICE_API_KEY, VENICE_BASE_URL, VENICE_AGENT_MODEL, MAX_STEPS, USE_SCREENSHOT
+from config import VENICE_API_KEY, VENICE_BASE_URL, VENICE_AGENT_MODEL, USE_SCREENSHOT
+
+# Step cap defined HERE (syncs via git) — config.py is gitignored so its value
+# never reaches the host. 0 = unlimited (runs until done/error/operator stop).
+MAX_STEPS = 0
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
@@ -107,6 +111,12 @@ from the screenshot.
 {"action": "mark_done", "index": 0}
   — Mark WORK QUEUE item [N] as completed so it is never processed again.
     Call this the moment you finish a queue item. (Items tagged (repeat) stay.)
+
+{"action": "set_speed", "typing": "fast", "cursor": "normal"}
+  — Change your own tempo on the fly. Values: a name (instant/very_fast/fast/
+    normal/slow/very_slow) or a number (lower = faster, e.g. 0.5). Use "speed"
+    to set everything at once: {"action":"set_speed","speed":"fast"}. Speed up
+    on simple forms; slow down where a site looks sensitive to fast input.
 
 {"action": "done", "result": "Summary of what was accomplished"}
   — Use when the entire task is complete.
@@ -669,6 +679,16 @@ def run_agent(
                             result = f"mark_done failed: {e}"
                     else:
                         result = "No index for mark_done."
+
+                # ── set_speed: AI controls its own tempo ─────────
+                elif a == "set_speed":
+                    from core import human_emulator as _he
+                    res = _he.set_speed(
+                        typing=action.get("typing"),
+                        cursor=action.get("cursor"),
+                        both=action.get("speed", action.get("both")),
+                    )
+                    result = f"Speed updated: {res}"
 
                 # ── save_data: persist collected data to file ────
                 elif a == "save_data":

@@ -48,26 +48,61 @@ def mouse_path(x0: float, y0: float, x1: float, y1: float) -> List[Tuple[int, in
 # Proficient and quick: fast touch typing, direct confident cursor, short
 # reaction times — but still human (micro-variance, the odd brief pause).
 
+# Runtime speed multipliers (the AI can change these live via set_speed).
+# Lower = faster. 1.0 = the base "office worker" tempo above.
+_TYPE_MULT = 1.0     # typing speed
+_MOVE_MULT = 1.0     # cursor travel speed
+_REACT_MULT = 1.0    # pause-before-next-action
+
+_NAMED = {
+    "instant": 0.1, "very_fast": 0.3, "fast": 0.55, "normal": 1.0,
+    "slow": 1.8, "very_slow": 2.8,
+}
+
+
+def _factor(v) -> float:
+    """Accept a number (multiplier) or a name ('fast'/'slow'/…)."""
+    try:
+        return max(0.05, float(v))
+    except (TypeError, ValueError):
+        return _NAMED.get(str(v).lower().strip(), 1.0)
+
+
+def set_speed(typing=None, cursor=None, both=None) -> str:
+    """Adjust tempo at runtime. Each arg is a name or a numeric multiplier
+    (lower = faster). `both` sets typing+cursor+reaction together."""
+    global _TYPE_MULT, _MOVE_MULT, _REACT_MULT
+    if both is not None:
+        f = _factor(both)
+        _TYPE_MULT = _MOVE_MULT = _REACT_MULT = f
+    if typing is not None:
+        _TYPE_MULT = _factor(typing)
+    if cursor is not None:
+        _MOVE_MULT = _factor(cursor)
+        _REACT_MULT = _factor(cursor)
+    return f"typing×{_TYPE_MULT:.2f} cursor×{_MOVE_MULT:.2f}"
+
+
 def move_step_delay() -> float:
     """Seconds between mouse path points — quick, confident travel."""
-    return random.uniform(0.002, 0.006)
+    return random.uniform(0.002, 0.006) * _MOVE_MULT
 
 
 def keystroke_delay() -> float:
     """Seconds between keystrokes — a fast touch typist (~12-28 cps)."""
     r = random.random()
     if r < 0.04:
-        # rare brief pause (glance away / think)
-        return random.uniform(0.15, 0.30)
-    return random.uniform(0.035, 0.08)
+        base = random.uniform(0.15, 0.30)   # rare brief pause
+    else:
+        base = random.uniform(0.035, 0.08)
+    return base * _TYPE_MULT
 
 
 def reaction_delay() -> float:
     """Seconds before the next action — short, this user works fast."""
     r = random.random()
-    if r < 0.10:
-        return random.uniform(1.2, 2.2)   # occasional read
-    return random.uniform(0.3, 0.9)
+    base = random.uniform(1.2, 2.2) if r < 0.10 else random.uniform(0.3, 0.9)
+    return base * _REACT_MULT
 
 
 def action_delay(min_ms: int = 200, max_ms: int = 1200) -> None:
